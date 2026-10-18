@@ -36,6 +36,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/split/bluetooth/uuid.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/ble_active_profile_changed.h>
+#include <zmk/events/ble_profile_connection_changed.h>
 
 #if IS_ENABLED(CONFIG_ZMK_BLE_PASSKEY_ENTRY)
 #include <zmk/events/keycode_state_changed.h>
@@ -497,6 +498,16 @@ static bool is_conn_active_profile(const struct bt_conn *conn) {
     return bt_addr_le_cmp(bt_conn_get_dst(conn), &profiles[active_profile].peer) == 0;
 }
 
+static int profile_index_for_conn(const struct bt_conn *conn) {
+    const bt_addr_le_t *address = bt_conn_get_dst(conn);
+    for (uint8_t index = 0; index < ZMK_BLE_PROFILE_COUNT; index++) {
+        if (bt_addr_le_cmp(address, &profiles[index].peer) == 0) {
+            return index;
+        }
+    }
+    return -1;
+}
+
 static void connected(struct bt_conn *conn, uint8_t err) {
     char addr[BT_ADDR_LE_STR_LEN];
     struct bt_conn_info info;
@@ -520,6 +531,14 @@ static void connected(struct bt_conn *conn, uint8_t err) {
 
     LOG_DBG("Connected %s", addr);
 
+    int profile_index = profile_index_for_conn(conn);
+    if (profile_index >= 0) {
+        raise_zmk_ble_profile_connection_changed((struct zmk_ble_profile_connection_changed){
+            .index = profile_index,
+            .connected = true,
+        });
+    }
+
     update_advertising();
 
     if (is_conn_active_profile(conn)) {
@@ -541,6 +560,14 @@ static void disconnected(struct bt_conn *conn, uint8_t reason) {
     if (info.role != BT_CONN_ROLE_PERIPHERAL) {
         LOG_DBG("SKIPPING FOR ROLE %d", info.role);
         return;
+    }
+
+    int profile_index = profile_index_for_conn(conn);
+    if (profile_index >= 0) {
+        raise_zmk_ble_profile_connection_changed((struct zmk_ble_profile_connection_changed){
+            .index = profile_index,
+            .connected = false,
+        });
     }
 
     // We need to do this in a work callback, otherwise the advertising update will still see the

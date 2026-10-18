@@ -24,6 +24,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/physical_layouts.h>
 #include <zmk/split/transport/peripheral.h>
 #include <zmk/split/bluetooth/uuid.h>
+#include <zmk/split/bluetooth/status.h>
 #include <zmk/split/bluetooth/service.h>
 
 #include "peripheral.h"
@@ -34,6 +35,54 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/events/sensor_event.h>
 #include <zmk/sensors.h>
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+static struct zmk_split_ble_status central_status;
+static bool central_status_valid;
+static zmk_split_ble_status_changed_cb_t central_status_changed_cb;
+
+static ssize_t split_svc_write_status(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                      const void *buf, uint16_t len, uint16_t offset,
+                                      uint8_t flags) {
+    if (offset != 0 || len != sizeof(central_status)) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    struct zmk_split_ble_status status;
+    memcpy(&status, buf, sizeof(status));
+    if (status.version != ZMK_SPLIT_BLE_STATUS_VERSION) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+
+    central_status = status;
+    central_status_valid = true;
+    if (central_status_changed_cb) {
+        central_status_changed_cb(&central_status);
+    }
+    return len;
+}
+
+int zmk_split_ble_register_central_status_callback(zmk_split_ble_status_changed_cb_t callback) {
+    if (!callback) {
+        return -EINVAL;
+    }
+
+    central_status_changed_cb = callback;
+    if (central_status_valid) {
+        central_status_changed_cb(&central_status);
+    }
+    return 0;
+}
+
+int zmk_split_ble_get_central_status(struct zmk_split_ble_status *status) {
+    if (!status || !central_status_valid) {
+        return -ENODATA;
+    }
+
+    *status = central_status;
+    return 0;
+}
+#endif
 
 #if ZMK_KEYMAP_HAS_SENSORS
 static struct sensor_event last_sensor_event;
@@ -201,11 +250,17 @@ BT_GATT_SERVICE_DEFINE(
                                BT_GATT_CHRC_WRITE_WITHOUT_RESP, BT_GATT_PERM_WRITE_ENCRYPT, NULL,
                                split_svc_update_indicators, NULL),
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+    BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(ZMK_SPLIT_BT_STATUS_SYNC_UUID),
+                           BT_GATT_CHRC_WRITE_WITHOUT_RESP, BT_GATT_PERM_WRITE_ENCRYPT, NULL,
+                           split_svc_write_status, NULL),
+#endif
     BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(ZMK_SPLIT_BT_SELECT_PHYS_LAYOUT_UUID),
                            BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,
                            BT_GATT_PERM_WRITE_ENCRYPT | BT_GATT_PERM_READ_ENCRYPT,
                            split_svc_get_selected_phys_layout, split_svc_select_phys_layout,
-                           NULL), );
+                           NULL),
+    );
 
 K_THREAD_STACK_DEFINE(service_q_stack, CONFIG_ZMK_SPLIT_BLE_PERIPHERAL_STACK_SIZE);
 

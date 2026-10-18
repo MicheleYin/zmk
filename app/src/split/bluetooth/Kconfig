@@ -10,6 +10,13 @@ config ZMK_SPLIT_BLE_PRIORITY
     help
         Lower number priorities transports are favored over higher numbers.
 
+config ZMK_SPLIT_BLE_STATUS_SYNC
+    bool "Enable central status synchronization for split peripherals"
+    default n
+    help
+      Add an optional characteristic for sharing central-owned status with
+      connected split peripherals. Both halves must enable this option.
+
 # Added for backwards compatibility. New shields / board should set `ZMK_SPLIT_ROLE_CENTRAL` only.
 config ZMK_SPLIT_BLE_ROLE_CENTRAL
     bool

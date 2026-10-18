@@ -32,9 +32,19 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/sensor_event.h>
 #include <zmk/events/battery_state_changed.h>
+#include <zmk/events/layer_state_changed.h>
+#include <zmk/events/wpm_state_changed.h>
+#include <zmk/events/endpoint_changed.h>
+#include <zmk/events/ble_active_profile_changed.h>
+#include <zmk/events/ble_profile_connection_changed.h>
+#include <zmk/battery.h>
 #include <zmk/pointing/input_split.h>
 #include <zmk/hid_indicators_types.h>
 #include <zmk/physical_layouts.h>
+#include <zmk/keymap.h>
+#include <zmk/wpm.h>
+#include <zmk/endpoints.h>
+#include <zmk/split/bluetooth/status.h>
 
 static int start_scanning(void);
 
@@ -54,6 +64,9 @@ struct peripheral_slot {
     struct bt_gatt_subscribe_params sensor_subscribe_params;
     struct bt_gatt_discover_params sub_discover_params;
     uint16_t run_behavior_handle;
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+    uint16_t status_sync_handle;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
     struct bt_gatt_subscribe_params batt_lvl_subscribe_params;
     struct bt_gatt_read_params batt_lvl_read_params;
@@ -230,6 +243,9 @@ int release_peripheral_slot(int index) {
     slot->subscribe_params.value_handle = 0;
     slot->run_behavior_handle = 0;
     slot->selected_physical_layout_handle = 0;
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+    slot->status_sync_handle = 0;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
     slot->update_hid_indicators = 0;
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
@@ -607,6 +623,69 @@ static int split_central_subscribe(struct bt_conn *conn, struct bt_gatt_subscrib
     return err;
 }
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+static struct zmk_split_ble_status get_central_status(void) {
+    struct zmk_endpoint_instance endpoint = zmk_endpoint_get_selected();
+    int active_profile = zmk_ble_active_profile_index();
+
+    struct zmk_split_ble_status status = {
+        .version = ZMK_SPLIT_BLE_STATUS_VERSION,
+        .active_layer = zmk_keymap_highest_layer_active(),
+        .central_battery_level = zmk_battery_state_of_charge(),
+        .central_charge_state = zmk_battery_charge_state(),
+#if IS_ENABLED(CONFIG_ZMK_WPM)
+        .words_per_minute = zmk_wpm_get_state(),
+#endif
+        .active_ble_profile =
+            active_profile >= 0 ? active_profile : ZMK_SPLIT_BLE_STATUS_NO_PROFILE,
+        .ble_profile_count = MIN(ZMK_BLE_PROFILE_COUNT, 8),
+    };
+
+    switch (endpoint.transport) {
+    case ZMK_TRANSPORT_USB:
+        status.output = ZMK_SPLIT_BLE_STATUS_OUTPUT_USB;
+        break;
+    case ZMK_TRANSPORT_BLE:
+        status.output = ZMK_SPLIT_BLE_STATUS_OUTPUT_BLE;
+        break;
+    default:
+        status.output = ZMK_SPLIT_BLE_STATUS_OUTPUT_NONE;
+        break;
+    }
+
+    for (uint8_t profile = 0; profile < MIN(ZMK_BLE_PROFILE_COUNT, 8); profile++) {
+        if (!zmk_ble_profile_is_open(profile)) {
+            status.bonded_ble_profiles |= BIT(profile);
+        }
+        if (zmk_ble_profile_is_connected(profile)) {
+            status.connected_ble_profiles |= BIT(profile);
+        }
+    }
+
+    return status;
+}
+
+static void send_central_status_work_cb(struct k_work *work) {
+    struct zmk_split_ble_status status = get_central_status();
+
+    for (int i = 0; i < ZMK_SPLIT_BLE_PERIPHERAL_COUNT; i++) {
+        struct peripheral_slot *slot = &peripherals[i];
+        if (slot->state != PERIPHERAL_SLOT_STATE_CONNECTED || slot->conn == NULL ||
+            slot->status_sync_handle == 0 || bt_conn_get_security(slot->conn) < BT_SECURITY_L2) {
+            continue;
+        }
+
+        int err = bt_gatt_write_without_response(slot->conn, slot->status_sync_handle, &status,
+                                                 sizeof(status), true);
+        if (err < 0) {
+            LOG_DBG("Failed to send split status to peripheral %d (err %d)", i, err);
+        }
+    }
+}
+
+K_WORK_DEFINE(send_central_status_work, send_central_status_work_cb);
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC) */
+
 static int update_peripheral_selected_layout(struct peripheral_slot *slot, uint8_t layout_idx) {
     if (slot->state != PERIPHERAL_SLOT_STATE_CONNECTED) {
         return -ENOTCONN;
@@ -726,6 +805,13 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
             LOG_DBG("Found select physical layout handle");
             slot->selected_physical_layout_handle = bt_gatt_attr_value_handle(attr);
             k_work_submit(&update_peripherals_selected_layouts_work);
+    #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+        } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
+                    BT_UUID_DECLARE_128(ZMK_SPLIT_BT_STATUS_SYNC_UUID))) {
+            LOG_DBG("Found central status sync handle");
+            slot->status_sync_handle = bt_gatt_attr_value_handle(attr);
+            k_work_submit(&send_central_status_work);
+    #endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
         } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
                                 BT_UUID_DECLARE_128(ZMK_SPLIT_BT_UPDATE_HID_INDICATORS_UUID))) {
@@ -1308,11 +1394,39 @@ static int zmk_split_bt_central_listener_cb(const zmk_event_t *eh) {
     if (as_zmk_physical_layout_selection_changed(eh)) {
         k_work_submit(&update_peripherals_selected_layouts_work);
     }
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+    bool status_changed = as_zmk_layer_state_changed(eh) || as_zmk_endpoint_changed(eh) ||
+                          as_zmk_ble_active_profile_changed(eh) ||
+                          as_zmk_ble_profile_connection_changed(eh) ||
+                          as_zmk_battery_state_changed(eh);
+#if IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_SPLIT_FETCHING)
+    status_changed = status_changed || as_zmk_peripheral_battery_state_changed(eh);
+#endif
+#if IS_ENABLED(CONFIG_ZMK_WPM)
+    status_changed = status_changed || as_zmk_wpm_state_changed(eh);
+#endif
+    if (status_changed) {
+        k_work_submit(&send_central_status_work);
+    }
+#endif
     return ZMK_EV_EVENT_BUBBLE;
 }
 
 ZMK_LISTENER(zmk_split_bt_central, zmk_split_bt_central_listener_cb);
 ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_physical_layout_selection_changed);
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_layer_state_changed);
+#if IS_ENABLED(CONFIG_ZMK_WPM)
+ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_wpm_state_changed);
+#endif
+ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_endpoint_changed);
+ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_ble_active_profile_changed);
+ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_ble_profile_connection_changed);
+ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_battery_state_changed);
+#if IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_SPLIT_FETCHING)
+ZMK_SUBSCRIPTION(zmk_split_bt_central, zmk_peripheral_battery_state_changed);
+#endif
+#endif
 
 static int split_central_bt_send_command(uint8_t source,
                                          struct zmk_split_transport_central_command cmd) {
