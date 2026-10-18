@@ -34,6 +34,7 @@ static uint32_t key_pressed_count;
 
 int zmk_wpm_get_state(void) { return wpm_state; }
 
+#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 int wpm_event_listener(const zmk_event_t *eh) {
     const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
     if (ev) {
@@ -45,6 +46,7 @@ int wpm_event_listener(const zmk_event_t *eh) {
     }
     return 0;
 }
+#endif
 
 void wpm_work_handler(struct k_work *work) {
     wpm_update_counter++;
@@ -79,7 +81,9 @@ static int wpm_init(void) {
     return 0;
 }
 
+#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 ZMK_LISTENER(wpm, wpm_event_listener);
 ZMK_SUBSCRIPTION(wpm, zmk_keycode_state_changed);
+#endif
 
 SYS_INIT(wpm_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);

@@ -28,7 +28,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/split/transport/central.h>
 #include <zmk/split/bluetooth/uuid.h>
 #include <zmk/split/bluetooth/service.h>
+#include <zmk/split/bluetooth/central.h>
 #include <zmk/event_manager.h>
+#include <zmk/events/split_peripheral_status_changed.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/sensor_event.h>
 #include <zmk/events/battery_state_changed.h>
@@ -284,6 +286,16 @@ int confirm_peripheral_slot_conn(struct bt_conn *conn) {
 
     peripherals[idx].state = PERIPHERAL_SLOT_STATE_CONNECTED;
     return 0;
+}
+
+bool zmk_split_bt_central_is_connected(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(peripherals); i++) {
+        if (peripherals[i].state == PERIPHERAL_SLOT_STATE_CONNECTED) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static void notify_transport_status(void);
@@ -1167,6 +1179,10 @@ static void split_central_connected(struct bt_conn *conn, uint8_t conn_err) {
     LOG_DBG("Connected: %s", addr);
 
     confirm_peripheral_slot_conn(conn);
+    raise_zmk_split_peripheral_status_changed(
+        (struct zmk_split_peripheral_status_changed){
+            .connected = zmk_split_bt_central_is_connected(),
+        });
     split_central_process_connection(conn);
     k_work_submit(&notify_status_work);
 }
@@ -1210,6 +1226,11 @@ static void split_central_disconnected(struct bt_conn *conn, uint8_t reason) {
     if (err < 0) {
         LOG_WRN("Failed to release peripheral slot (%d)", err);
     }
+
+    raise_zmk_split_peripheral_status_changed(
+        (struct zmk_split_peripheral_status_changed){
+            .connected = zmk_split_bt_central_is_connected(),
+        });
 
     k_work_submit(&notify_status_work);
 
