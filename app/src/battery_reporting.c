@@ -95,6 +95,7 @@ static ssize_t read_blvl(struct bt_conn *conn, const struct bt_gatt_attr *attr, 
 
 #define BAS_HAS_BLS                                                                                \
     (IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS) ||                                               \
+    IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS_USB_POWER) ||                                     \
      IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_CHARGE_STATE_FETCHING))
 
 #if BAS_HAS_BLS

@@ -19,7 +19,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/battery.h>
 #include <zmk/workqueue.h>
 
-#if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
+#if IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS_USB_POWER)
+#include <zmk/events/usb_conn_state_changed.h>
+#include <zmk/usb.h>
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS) && DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
 
 #define HAS_FULL_GPIO DT_INST_NODE_HAS_PROP(0, full_gpios)
 
@@ -130,4 +135,23 @@ static int zmk_battery_charge_status_init(void) {
 
 SYS_INIT(zmk_battery_charge_status_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
-#endif /* DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */
+#elif IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS_USB_POWER)
+
+enum zmk_battery_charge_state zmk_battery_charge_state(void) {
+    return zmk_usb_is_powered() ? ZMK_BATTERY_CHARGE_STATE_CHARGING
+                                : ZMK_BATTERY_CHARGE_STATE_DISCHARGING;
+}
+
+static int usb_conn_state_changed_listener(const zmk_event_t *eh) {
+    if (as_zmk_usb_conn_state_changed(eh) == NULL) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    zmk_battery_update_now();
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(usb_conn_state_changed, usb_conn_state_changed_listener);
+ZMK_SUBSCRIPTION(usb_conn_state_changed, zmk_usb_conn_state_changed);
+
+#endif /* IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS) && DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */

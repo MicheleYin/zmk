@@ -23,16 +23,16 @@ uint8_t zmk_battery_state_of_charge(void);
 // Sample now instead of waiting for the next report interval.
 void zmk_battery_update_now(void);
 
-#if IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS)
+#if IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS) ||                                                \
+    IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS_USB_POWER)
 
 enum zmk_battery_charge_state zmk_battery_charge_state(void);
 
 #else
 
-// No charger status pin, so there is nothing to report from. USB power is not a
-// substitute: it stays asserted once the battery is full.
+// Without a charger status pin or USB-power approximation, the charge state is unknown.
 static inline enum zmk_battery_charge_state zmk_battery_charge_state(void) {
     return ZMK_BATTERY_CHARGE_STATE_UNKNOWN;
 }
 
-#endif // IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS)
+#endif // IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS) || IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS_USB_POWER)
