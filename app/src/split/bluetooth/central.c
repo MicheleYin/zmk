@@ -817,13 +817,13 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
             LOG_DBG("Found select physical layout handle");
             slot->selected_physical_layout_handle = bt_gatt_attr_value_handle(attr);
             k_work_submit(&update_peripherals_selected_layouts_work);
-    #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_STATUS_SYNC)
         } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
-                    BT_UUID_DECLARE_128(ZMK_SPLIT_BT_STATUS_SYNC_UUID))) {
+                                BT_UUID_DECLARE_128(ZMK_SPLIT_BT_STATUS_SYNC_UUID))) {
             LOG_DBG("Found central status sync handle");
             slot->status_sync_handle = bt_gatt_attr_value_handle(attr);
             k_work_submit(&send_central_status_work);
-    #endif
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
         } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
                                 BT_UUID_DECLARE_128(ZMK_SPLIT_BT_UPDATE_HID_INDICATORS_UUID))) {
@@ -1179,10 +1179,9 @@ static void split_central_connected(struct bt_conn *conn, uint8_t conn_err) {
     LOG_DBG("Connected: %s", addr);
 
     confirm_peripheral_slot_conn(conn);
-    raise_zmk_split_peripheral_status_changed(
-        (struct zmk_split_peripheral_status_changed){
-            .connected = zmk_split_bt_central_is_connected(),
-        });
+    raise_zmk_split_peripheral_status_changed((struct zmk_split_peripheral_status_changed){
+        .connected = zmk_split_bt_central_is_connected(),
+    });
     split_central_process_connection(conn);
     k_work_submit(&notify_status_work);
 }
@@ -1227,10 +1226,9 @@ static void split_central_disconnected(struct bt_conn *conn, uint8_t reason) {
         LOG_WRN("Failed to release peripheral slot (%d)", err);
     }
 
-    raise_zmk_split_peripheral_status_changed(
-        (struct zmk_split_peripheral_status_changed){
-            .connected = zmk_split_bt_central_is_connected(),
-        });
+    raise_zmk_split_peripheral_status_changed((struct zmk_split_peripheral_status_changed){
+        .connected = zmk_split_bt_central_is_connected(),
+    });
 
     k_work_submit(&notify_status_work);
 

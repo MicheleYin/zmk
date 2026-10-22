@@ -154,4 +154,5 @@ static int usb_conn_state_changed_listener(const zmk_event_t *eh) {
 ZMK_LISTENER(usb_conn_state_changed, usb_conn_state_changed_listener);
 ZMK_SUBSCRIPTION(usb_conn_state_changed, zmk_usb_conn_state_changed);
 
-#endif /* IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS) && DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */
+#endif /* IS_ENABLED(CONFIG_ZMK_BATTERY_CHARGE_STATUS) && DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) \
+        */
